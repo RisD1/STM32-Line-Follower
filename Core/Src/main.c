@@ -8,7 +8,8 @@
  * Set exactly ONE RUN_* option to 1.
  * Set all other RUN_* options to 0.
  *
- * Start with sensor testing. Raise the wheels for motor tests.
+ * Start with sensor testing.
+ * Raise the wheels for motor tests.
  */
 /* USER CODE END Header */
 
@@ -26,6 +27,7 @@
 
 /* =========================================================
    TEST SELECTION
+   Enable exactly ONE test at a time.
    ========================================================= */
 
 #define RUN_SENSOR_TEST       1
@@ -54,6 +56,7 @@ void Error_Handler(void);
 
 int main(void)
 {
+    /* Initialize HAL and system clock */
     HAL_Init();
     SystemClock_Config();
 
@@ -76,10 +79,9 @@ int main(void)
     SwitchInput_Init();
 #endif
 
-    /* Start safely */
+    /* Keep motors stopped during startup */
     MotorControl_Stop();
 
-    /* Start a selected timed turn once */
 #if RUN_LEFT_TURN_TEST
     MotorControl_TurnLeft90_Start();
 #elif RUN_RIGHT_TURN_TEST
@@ -89,44 +91,60 @@ int main(void)
     while (1)
     {
 #if RUN_SENSOR_TEST
-        /* Inspect sensor readings in the debugger */
+
+        /* Refresh ADC sensor readings */
         IR_Sensors_Update();
+
 #endif
 
 #if RUN_LINE_POSITION
-        /* Refresh sensors, then calculate line position */
+
+        /* Refresh readings and calculate line position */
         IR_Sensors_Update();
         LinePosition_Update();
+
 #endif
 
 #if RUN_DIP_SWITCH_TEST
-        /* Read the four DIP switches */
+
+        /* Update DIP switch state */
         SwitchInput_Update();
+
 #endif
 
 #if RUN_FORWARD_TEST
+
         /* Continuous forward motion at 15% */
         MotorControl_Forward(15);
+
 #endif
 
 #if RUN_BACKWARD_TEST
+
         /* Continuous backward motion at 15% */
         MotorControl_Backward(15);
+
 #endif
 
 #if RUN_LEFT_TURN_TEST || RUN_RIGHT_TURN_TEST
-        /* Stop the timed turn when its deadline expires */
+
+        /* Update timed turn state */
         MotorControl_TurnUpdate();
+
 #endif
 
 #if RUN_LINE_FOLLOWING
-        /* Line-following controller */
+
+        /* Read sensors, calculate position, and control motors */
         LineFollowing_Update();
+
 #endif
 
 #if RUN_STOP_TEST
+
         /* Keep motors stopped */
         MotorControl_Stop();
+
 #endif
 
         HAL_Delay(10);
@@ -144,14 +162,22 @@ void SystemClock_Config(void)
     RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
     __HAL_RCC_PWR_CLK_ENABLE();
-    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
-    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+    __HAL_PWR_VOLTAGESCALING_CONFIG(
+        PWR_REGULATOR_VOLTAGE_SCALE1
+    );
+
+    RCC_OscInitStruct.OscillatorType =
+        RCC_OSCILLATORTYPE_HSI;
+
     RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-    RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+
+    RCC_OscInitStruct.HSICalibrationValue =
+        RCC_HSICALIBRATION_DEFAULT;
 
     RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
     RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+
     RCC_OscInitStruct.PLL.PLLM = 16;
     RCC_OscInitStruct.PLL.PLLN = 200;
     RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
@@ -168,12 +194,16 @@ void SystemClock_Config(void)
         RCC_CLOCKTYPE_PCLK1 |
         RCC_CLOCKTYPE_PCLK2;
 
-    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+    RCC_ClkInitStruct.SYSCLKSource =
+        RCC_SYSCLKSOURCE_PLLCLK;
+
     RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
     RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
     RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
+    if (HAL_RCC_ClockConfig(
+            &RCC_ClkInitStruct,
+            FLASH_LATENCY_3) != HAL_OK)
     {
         Error_Handler();
     }

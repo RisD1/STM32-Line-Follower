@@ -1,37 +1,109 @@
+
 #include "line_position.h"
+#include <stdint.h>
 #include <math.h>
+
 volatile float line_error_mm = 0.0f;
 volatile float line_error_deviation_mm = 0.0f;
-volatile uint8_t line_detected = 0;
-volatile uint16_t line_weight[IR_SENSOR_COUNT] = {0};
-/* Safe uncalibrated defaults; replace with measured black/white readings. */
-uint16_t sensor_black[IR_SENSOR_COUNT] = {500,500,500,500,500,500,500,500};
-uint16_t sensor_white[IR_SENSOR_COUNT] = {3000,3000,3000,3000,3000,3000,3000,3000};
-void LinePosition_Init(void) { line_error_mm = 0.0f; line_error_deviation_mm = 0.0f; line_detected = 0U; }
-void LinePosition_Update(void) {
-    uint32_t i, total = 0U, cumulative = 0U;
-    int32_t span;
-    float pos[IR_SENSOR_COUNT];
-    /* Normalize so white-line response = 0..1000 independent of ADC polarity. */
-    for (i=0; i<IR_SENSOR_COUNT; ++i) {
-        uint16_t raw = ir_raw[i], b = sensor_black[i], w = sensor_white[i];
-        span = (int32_t)w - (int32_t)b;
-        if (span == 0) line_weight[i] = 0U;
-        else {
-            int32_t v = (((int32_t)raw - (int32_t)b) * 1000) / span;
-            if (v < 0) v = 0; if (v > 1000) v = 1000;
-            line_weight[i] = (uint16_t)v;
+volatile uint8_t line_detected = 0U;
+
+volatile uint16_t line_weight[IR_SENSOR_COUNT] = {0U};
+
+/*
+ * Initial calibration estimates.
+ * Replace each entry with the measured value for that sensor.
+ * Assumption: black line on white background.
+ */
+uint16_t sensor_black[IR_SENSOR_COUNT] = {
+    150U, 150U, 150U, 150U,
+    150U, 150U, 150U, 150U
+};
+
+uint16_t sensor_white[IR_SENSOR_COUNT] = {
+    600U, 600U, 600U, 600U,
+    600U, 600U, 600U, 600U
+};
+
+/* Minimum combined weight required to consider the line detected. */
+#define LINE_MIN_TOTAL_WEIGHT 180U
+
+void LinePosition_Init(void)
+{
+    line_error_mm = 0.0f;
+    line_error_deviation_mm = 0.0f;
+    line_detected = 0U;
+
+    for (uint8_t i = 0U; i < IR_SENSOR_COUNT; i++) {
+        line_weight[i] = 0U;
+    }
+}
+
+void LinePosition_Update(void)
+{
+    uint32_t total_weight = 0U;
+
+    /*
+     * Convert each ADC reading into a line-detection weight.
+     *
+     * Black -> approximately 1000
+     * White -> approximately 0
+     */
+    for (uint8_t i = 0U; i < IR_SENSOR_COUNT; i++) {
+        int32_t raw = (int32_t)ir_raw[i];
+        int32_t black = (int32_t)sensor_black[i];
+        int32_t white = (int32_t)sensor_white[i];
+        int32_t span = white - black;
+
+        if (span <= 0) {
+            line_weight[i] = 0U;
+            continue;
         }
-        total += line_weight[i];
-        pos[i] = ((float)i - 3.5f) * LINE_SENSOR_SPACING_MM;
+
+        int32_t value = ((white - raw) * 1000) / span;
+
+        if (value < 0) {
+            value = 0;
+        } else if (value > 1000) {
+            value = 1000;
+        }
+
+        line_weight[i] = (uint16_t)value;
+        total_weight += line_weight[i];
     }
-    if (total < 180U) { line_detected = 0U; line_error_deviation_mm = 0.0f; return; }
-    /* Weighted median: location where cumulative line weight reaches half. */
-    for (i=0; i<IR_SENSOR_COUNT; ++i) {
-        cumulative += line_weight[i];
-        if (cumulative * 2U >= total) { line_error_mm = pos[i]; break; }
+
+    /*
+     * No convincing line detection.
+     * Preserve the last valid line_error_mm so the line-following
+     * controller can use the previous direction when searching.
+     */
+    if (total_weight < LINE_MIN_TOTAL_WEIGHT) {
+        line_detected = 0U;
+        line_error_deviation_mm = 0.0f;
+        return;
     }
-    line_detected = 1U;
-    /* Deviation allowance: distance of estimate from centre, beyond deadband. */
+
+    /*
+     * Weighted median: find the sensor where cumulative weight
+     * reaches half the total.
+     *
+     * Sensor order must run from left to right.
+     */
+    uint32_t cumulative_weight = 0U;
+    uint32_t median_threshold = (total_weight + 1U) / 2U;
+
+    for (uint8_t i = 0U; i < IR_SENSOR_COUNT; i++) {
+        cumulative_weight += line_weight[i];
+
+        if (cumulative_weight >= median_threshold) {
+            line_error_mm =
+                ((float)i -
+                 ((float)IR_SENSOR_COUNT - 1.0f) / 2.0f)
+                * LINE_SENSOR_SPACING_MM;
+
+            break;
+        }
+    }
+
     line_error_deviation_mm = fabsf(line_error_mm);
+    line_detected = 1U;
 }
